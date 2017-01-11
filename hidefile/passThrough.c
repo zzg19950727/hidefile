@@ -13,7 +13,7 @@ ULONG_PTR OperationStatusCtx = 1;
 #define PTDBG_TRACE_OPERATION_STATUS    0x00000002
 
 ULONG gTraceFlags = 0;
-BOOLEAN service_enable = TRUE;
+BOOLEAN service_enable = FALSE;
 
 #ifdef ALLOC_PRAGMA
 #pragma alloc_text(INIT, DriverEntry)
@@ -32,6 +32,21 @@ CONST FLT_OPERATION_REGISTRATION Callbacks[] = {
 	FLTFL_OPERATION_REGISTRATION_SKIP_PAGING_IO,
 	PreCreate,
 	NULL },
+
+	{ IRP_MJ_READ,
+	0,
+	PtPreRead,
+	NULL },
+
+	{ IRP_MJ_WRITE,
+	0,
+	PtPreWrite,
+	NULL },
+
+	{ IRP_MJ_QUERY_INFORMATION,
+	0,
+	PreQueryInformation,
+	PostQueryInformation },
 
 	{ IRP_MJ_DIRECTORY_CONTROL,
 	0,
@@ -141,10 +156,15 @@ DriverEntry (
 
 		if (!NT_SUCCESS( status )) 
 		{
-
 			FltUnregisterFilter( gFilterHandle );
 		}
 	}
+	/*
+	AddNameToWhiteNameList(L".txt", L"ext");
+	Psi_AddProcessInfo("notepad.exe", FALSE);
+	AddNameToWhiteNameList(L".doc", L"ext");
+	Psi_AddProcessInfo("winword.exe", FALSE);
+	*/
 	//AddNameToWhiteNameList(L"c:",L"list.txt");
 	//AddNameToWhiteNameList(L"c:",L"change.txt");
 	DbgPrint("Leave DriverEntry()\n");
@@ -157,7 +177,6 @@ NTSTATUS
 PtUnload (
 		  __in FLT_FILTER_UNLOAD_FLAGS Flags
 		  )
-	
 {
 	UNREFERENCED_PARAMETER( Flags );
 
@@ -214,7 +233,7 @@ STATUS_FLT_DO_NOT_ATTACH - do not attach
 	UNREFERENCED_PARAMETER(VolumeFilesystemType);
 
 	PAGED_CODE();
-
+	//return STATUS_SUCCESS;
 	if (FlagOn(Flags, FLTFL_INSTANCE_SETUP_AUTOMATIC_ATTACHMENT)) {
 
 		//
@@ -338,36 +357,32 @@ PreCreate(
 	
 	if( !service_enable )
 		return callbackStatus;
+	if (FlagOn(Data->Iopb->TargetFileObject->Flags, FO_VOLUME_OPEN))
+		goto SimRepPreCreateCleanup;
 		//获取文件路径  
 		status = FileGetPathName(FltObjects, &strFilePath);
 		if (!NT_SUCCESS(status))
 			goto SimRepPreCreateCleanup;
 		
 		//判断是否是重定位的文件  
-		if (SearchFile(strFilePath.Buffer ) && 
-			Ps_IsCurrentProcessMonitored(strFilePath.Buffer, strFilePath.Length) )
+		if ((SearchFile(strFilePath.Buffer ) && 
+			Ps_IsCurrentProcessAuth(strFilePath.Buffer, strFilePath.Length)))
+			//|| Ps_IsCurrentProcessMonitored() )
 		{
 			PUNICODE_STRING filename = &FltObjects->FileObject->FileName;
 			UNICODE_STRING file_base64;
-			UStringBase64EncodeFileName(&strFilePath, &file_base64); 
-#ifndef _WIN64
-			int ulen = file_base64.MaximumLength +\
-				wcslen(L"\\Device\\Volume{aa4fcbdf-b6a2-11e6-8556-000c2975342d}\\")*sizeof(WCHAR);
-#else
+			UStringBase32EncodeFileName(&strFilePath, &file_base64);
+
 			int ulen = file_base64.MaximumLength +
-				wcslen(L"\\Device\\Volume{f1209d33-496d-11e6-995f-9c2a70d53f1c}\\") * sizeof(WCHAR);
-#endif
+				wcslen(L"\\Device\\Volume{aa4fcbe0-b6a2-11e6-8556-000c2975342d}\\") * sizeof(WCHAR);
+
 			PVOID pBuff = ExAllocatePool(NonPagedPool, ulen);
 			if (pBuff)
 			{
 				RtlZeroMemory(pBuff, ulen);
-#ifndef _WIN64
 				RtlStringCbPrintfExW(pBuff, ulen, NULL, NULL, STRSAFE_FILL_BEHIND_NULL, \
-					L"\\Device\\Volume{aa4fcbdf-b6a2-11e6-8556-000c2975342d}\\%wZ", &file_base64);
-#else
-				RtlStringCbPrintfExW(pBuff, ulen, NULL, NULL, STRSAFE_FILL_BEHIND_NULL, \
-					L"\\Device\\Volume{f1209d33-496d-11e6-995f-9c2a70d53f1c}\\%wZ", &file_base64);
-#endif
+					L"\\Device\\Volume{aa4fcbe0-b6a2-11e6-8556-000c2975342d}\\%wZ", &file_base64);
+
 				ExFreePool(filename->Buffer);
 				filename->Length = wcslen(pBuff)*sizeof(WCHAR);
 				filename->MaximumLength = ulen;
@@ -392,6 +407,234 @@ SimRepPreCreateCleanup:
 		callbackStatus = FLT_PREOP_COMPLETE;
 	}
 	//DbgPrint("***Leave PreCreate()***\n");
+	return callbackStatus;
+}
+
+FLT_PREOP_CALLBACK_STATUS
+PtPreRead(
+	__inout PFLT_CALLBACK_DATA Data,
+	__in PCFLT_RELATED_OBJECTS FltObjects,
+	__deref_out_opt PVOID *CompletionContext
+)
+{
+	PAGED_CODE();
+
+	NTSTATUS status;
+	UNICODE_STRING strFilePath;
+	FLT_PREOP_CALLBACK_STATUS callbackStatus;
+	UNREFERENCED_PARAMETER(CompletionContext);
+
+	//DbgPrint("***Enter PreRead()***\n");
+
+	status = STATUS_SUCCESS;
+	callbackStatus = FLT_PREOP_SUCCESS_NO_CALLBACK;
+	return callbackStatus;
+	/*
+	if (Ps_IsMemFS())
+		goto SimRepPreCreateCleanup;
+		*/
+	//获取文件路径  
+	status = FileGetPathName(FltObjects, &strFilePath);
+	if (!NT_SUCCESS(status))
+		goto SimRepPreCreateCleanup;
+
+	//判断是否是重定位的文件  
+	if (SearchFile(strFilePath.Buffer))
+	{
+		Data->Iopb->Parameters.Read.ByteOffset.QuadPart += HEAD_SIZE;
+	}
+	ExFreePool(strFilePath.Buffer);
+
+SimRepPreCreateCleanup:
+	if (!NT_SUCCESS(status))
+	{
+		Data->IoStatus.Status = status;
+		callbackStatus = FLT_PREOP_COMPLETE;
+	}
+	//DbgPrint("***Leave PreRead()***\n");
+	return callbackStatus;
+}
+
+FLT_PREOP_CALLBACK_STATUS
+PtPreWrite(
+	__inout PFLT_CALLBACK_DATA Data,
+	__in PCFLT_RELATED_OBJECTS FltObjects,
+	__deref_out_opt PVOID *CompletionContext
+)
+{
+	PAGED_CODE();
+
+	NTSTATUS status;
+	UNICODE_STRING strFilePath;
+	FLT_PREOP_CALLBACK_STATUS callbackStatus;
+	UNREFERENCED_PARAMETER(CompletionContext);
+
+	//DbgPrint("***Enter PreWrite()***\n");
+
+	status = STATUS_SUCCESS;
+	callbackStatus = FLT_PREOP_SUCCESS_NO_CALLBACK;
+	return callbackStatus;
+	/*
+	if( Ps_IsMemFS() )
+		goto SimRepPreCreateCleanup;
+*/
+	//获取文件路径  
+	status = FileGetPathName(FltObjects, &strFilePath);
+	if (!NT_SUCCESS(status))
+		goto SimRepPreCreateCleanup;
+
+	//判断是否是重定位的文件  
+	if (SearchFile(strFilePath.Buffer) )
+	{
+		status = STATUS_ACCESS_DENIED;
+	}
+	ExFreePool(strFilePath.Buffer);
+
+SimRepPreCreateCleanup:
+	if (status == STATUS_ACCESS_DENIED)
+	{
+		Data->IoStatus.Status = STATUS_ACCESS_DENIED;
+		Data->IoStatus.Information = 0;
+		callbackStatus = FLT_PREOP_COMPLETE;
+	}
+	else if (!NT_SUCCESS(status))
+	{
+		Data->IoStatus.Status = status;
+		callbackStatus = FLT_PREOP_COMPLETE;
+	}
+	//DbgPrint("***Leave PreWrite()***\n");
+	return callbackStatus;
+}
+
+FLT_PREOP_CALLBACK_STATUS
+PreQueryInformation(
+	__inout PFLT_CALLBACK_DATA Data,
+	__in PCFLT_RELATED_OBJECTS FltObjects,
+	__deref_out_opt PVOID CompletionContext)
+{
+	PFLT_IO_PARAMETER_BLOCK iopb = Data->Iopb;
+	PFILE_OBJECT file_object = iopb->TargetFileObject;
+	PFLT_PARAMETERS para = &(iopb->Parameters);
+	PUCHAR buffer = para->QueryFileInformation.InfoBuffer;
+
+	PAGED_CODE();
+
+	NTSTATUS status;
+	UNICODE_STRING strFilePath;
+	FLT_PREOP_CALLBACK_STATUS callbackStatus;
+	UNREFERENCED_PARAMETER(CompletionContext);
+
+	//DbgPrint("***Enter PreQueryInformation()***\n");
+
+	status = STATUS_SUCCESS;
+	callbackStatus = FLT_PREOP_SUCCESS_NO_CALLBACK;
+	return callbackStatus;
+	//获取文件路径  
+	status = FileGetPathName(FltObjects, &strFilePath);
+	if (!NT_SUCCESS(status))
+		return callbackStatus;
+
+	if (SearchFile(strFilePath.Buffer))
+			callbackStatus = FLT_PREOP_SUCCESS_WITH_CALLBACK;
+
+	ExFreePool(strFilePath.Buffer);
+	return callbackStatus;
+}
+
+FLT_POSTOP_CALLBACK_STATUS
+PostQueryInformation(
+	__inout PFLT_CALLBACK_DATA Data,
+	__in PCFLT_RELATED_OBJECTS FltObjects,
+	__in PVOID CompletionContext,
+	__in FLT_POST_OPERATION_FLAGS Flags
+)
+{
+	PFLT_IO_PARAMETER_BLOCK iopb = Data->Iopb;
+	PFLT_PARAMETERS para = &(iopb->Parameters);
+	PUCHAR buffer = para->QueryFileInformation.InfoBuffer;
+
+	PAGED_CODE();
+
+	FLT_PREOP_CALLBACK_STATUS callbackStatus;
+	UNREFERENCED_PARAMETER(CompletionContext);
+	UNREFERENCED_PARAMETER(Flags);
+	//DbgPrint("***Enter PostQueryInformation()***\n");
+
+	callbackStatus = FLT_POSTOP_FINISHED_PROCESSING;
+	
+	switch (para->QueryFileInformation.FileInformationClass)
+	{
+	case FileAllInformation:
+	{
+		PFILE_ALL_INFORMATION all_infor = (PFILE_ALL_INFORMATION)buffer;
+		if (Data->IoStatus.Information >=
+			sizeof(FILE_BASIC_INFORMATION) +
+			sizeof(FILE_STANDARD_INFORMATION))
+		{
+			//ASSERT(all_infor->StandardInformation.EndOfFile.QuadPart >= FILE_HEAD_LEN);
+			if (all_infor->StandardInformation.EndOfFile.QuadPart >= HEAD_SIZE) {
+				all_infor->StandardInformation.EndOfFile.QuadPart -= HEAD_SIZE;
+				all_infor->StandardInformation.AllocationSize.QuadPart -= HEAD_SIZE;
+			}
+			if (Data->IoStatus.Information >=
+				sizeof(FILE_BASIC_INFORMATION) +
+				sizeof(FILE_STANDARD_INFORMATION) +
+				sizeof(FILE_INTERNAL_INFORMATION) +
+				sizeof(FILE_EA_INFORMATION) +
+				sizeof(FILE_ACCESS_INFORMATION) +
+				sizeof(FILE_POSITION_INFORMATION))
+			{
+					all_infor->PositionInformation.CurrentByteOffset.QuadPart += HEAD_SIZE;
+			}
+		}
+		break;
+	}
+	case FileAllocationInformation:
+	{
+		PFILE_ALLOCATION_INFORMATION alloc_infor =
+			(PFILE_ALLOCATION_INFORMATION)buffer;
+		if (alloc_infor->AllocationSize.QuadPart >= HEAD_SIZE)
+			alloc_infor->AllocationSize.QuadPart -= HEAD_SIZE;
+		break;
+	}
+	case FileValidDataLengthInformation:
+	{
+		PFILE_VALID_DATA_LENGTH_INFORMATION valid_length =
+			(PFILE_VALID_DATA_LENGTH_INFORMATION)buffer;
+		if (valid_length->ValidDataLength.QuadPart >= HEAD_SIZE)
+			valid_length->ValidDataLength.QuadPart -= HEAD_SIZE;
+		break;
+	}
+	case FileStandardInformation:
+	{
+		PFILE_STANDARD_INFORMATION stand_infor = (PFILE_STANDARD_INFORMATION)buffer;
+		if (stand_infor->EndOfFile.QuadPart >= HEAD_SIZE) {
+			stand_infor->AllocationSize.QuadPart -= HEAD_SIZE;
+			stand_infor->EndOfFile.QuadPart -= HEAD_SIZE;
+		}
+		break;
+	}
+	case FileEndOfFileInformation:
+	{
+		PFILE_END_OF_FILE_INFORMATION end_infor =
+			(PFILE_END_OF_FILE_INFORMATION)buffer;
+		if (end_infor->EndOfFile.QuadPart >= HEAD_SIZE)
+			end_infor->EndOfFile.QuadPart -= HEAD_SIZE;
+		break;
+	}
+	case FilePositionInformation:
+	{
+		PFILE_POSITION_INFORMATION PositionInformation =
+			(PFILE_POSITION_INFORMATION)buffer;
+		if (PositionInformation->CurrentByteOffset.QuadPart > HEAD_SIZE)
+			PositionInformation->CurrentByteOffset.QuadPart -= HEAD_SIZE;
+		break;
+	}
+	default:
+		;
+	};
+
+	//DbgPrint("***Leave PostQueryInformation()***\n");
 	return callbackStatus;
 }
 
@@ -477,11 +720,11 @@ SpyMessage (
 		break;
 		
 	case ADD_PROTECTED_PROCESS:
-		Psi_AddProcessInfo(inputBuf.process, TRUE);
+		Psi_AddProcessInfo(inputBuf.process, FALSE);
 		break;
 
 	case DEL_PROTECTED_PROCESS:
-		Psi_DelProcessInfo(inputBuf.process, TRUE);
+		Psi_DelProcessInfo(inputBuf.process, FALSE);
 		break;
 
 	default:

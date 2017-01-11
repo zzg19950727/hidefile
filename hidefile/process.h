@@ -4,6 +4,7 @@
 BOOLEAN Psi_SearchForSpecifiedProcessInList(PUCHAR pszProcessName, BOOLEAN bRemove) ;
 ULONG   Psi_AddProcessInfo(PUCHAR pszProcessName, BOOLEAN bMonitor) ;
 ULONG   Psi_DelProcessInfo(PUCHAR pszProcessName, BOOLEAN bMonitor) ;
+ULONG   Psi_SetProcessInfo(PUCHAR pszProcessName, BOOLEAN bMonitor);
 
 /**
  * Get current process name
@@ -26,11 +27,15 @@ Ps_GetProcessNameOffset(
  * Is current process monitored
  */
 BOOLEAN
-Ps_IsCurrentProcessMonitored(
+Ps_IsCurrentProcessMonitored() ;
+
+BOOLEAN
+Ps_IsCurrentProcessAuth(
 	WCHAR* pwszFilePathName,
 	ULONG  uLength
-	) ;
+);
 
+BOOLEAN Ps_IsMemFS ( );
 #pragma pack(1)
 
 /**

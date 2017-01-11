@@ -16,7 +16,6 @@ VOID InitWhiteProcNameListAndLock()
 
 }
 
-
 VOID AddNameToWhiteNameList(PWSTR xxName, PWSTR xxFileType)
 {
 	PWHITE_NAME_LIST whiteListNode;

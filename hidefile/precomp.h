@@ -14,5 +14,6 @@
 
 #define	_CMD_PATH		296
 #define MAXPATHLEN		1024
+#define HEAD_SIZE				1024
 
 #endif 
